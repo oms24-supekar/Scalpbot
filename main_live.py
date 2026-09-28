@@ -8,6 +8,7 @@ from delta_executor import DeltaExecutor
 from history_loader import fetch_historical_candles
 from market import stream_closed_candles
 from strategy import StrategyEngine
+from telegram_control import TelegramControl
 
 
 load_dotenv()
@@ -24,6 +25,17 @@ async def main():
         ).lower()
         == "true"
     )
+
+    confirm_trades = (
+        os.getenv(
+            "TELEGRAM_CONFIRM_TRADES",
+            "true",
+        ).lower()
+        == "true"
+    )
+
+    telegram = TelegramControl()
+    telegram.start()
 
     client = DeltaClient()
 
@@ -56,9 +68,35 @@ async def main():
         max_daily_loss_usd=2.0,
 
         live_auto_trading=live_auto,
+
+        notifier=telegram.notify,
+
+        trade_confirmation_callback=(
+            telegram.request_trade_confirmation
+            if confirm_trades
+            else None
+        ),
     )
 
     executor.reconcile_exchange()
+
+    telegram.set_handlers(
+        status_provider=executor.telegram_status,
+        kill_callback=executor.activate_kill_switch,
+        resume_callback=executor.deactivate_kill_switch,
+    )
+
+    telegram.notify(
+        "🟢 ScalpBot AWS started\n"
+        "Environment: INDIA PRODUCTION\n"
+        "Entry hours: 10:00 & 14:00 IST\n"
+        f"Orders: "
+        f"{'ENABLED' if client.allow_orders else 'DISABLED'}\n"
+        f"Live auto: "
+        f"{'ON' if live_auto else 'OFF'}\n"
+        f"Telegram confirmation: "
+        f"{'ON' if confirm_trades else 'OFF'}"
+    )
 
     print("\n📥 Warming EMA from production history...")
 
@@ -113,6 +151,11 @@ async def main():
     print(
         f"LIVE AUTO         : "
         f"{'ON' if live_auto else 'OFF'}"
+    )
+
+    print(
+        f"Telegram confirm  : "
+        f"{'ON' if confirm_trades else 'OFF'}"
     )
 
     if not live_auto:

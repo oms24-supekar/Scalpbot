@@ -39,6 +39,8 @@ class DeltaExecutor:
         max_contracts=1,
         max_daily_loss_usd=2.0,
         live_auto_trading=False,
+        notifier=None,
+        trade_confirmation_callback=None,
     ):
         self.client = client
         self.symbol = symbol
@@ -60,6 +62,10 @@ class DeltaExecutor:
         self.max_contracts = int(max_contracts)
         self.max_daily_loss_usd = float(max_daily_loss_usd)
         self.live_auto_trading = bool(live_auto_trading)
+        self.notifier = notifier
+        self.trade_confirmation_callback = (
+            trade_confirmation_callback
+        )
 
         self.position = None
         self.entries_today = 0
@@ -105,6 +111,17 @@ class DeltaExecutor:
         print(f"Kill switch         : {'ON' if self.kill_switch else 'OFF'}")
         print(f"Live auto trading   : {'ON' if self.live_auto_trading else 'OFF'}")
         print("=" * 60)
+
+    def _notify(self, text):
+        if self.notifier is None:
+            return
+
+        try:
+            self.notifier(str(text))
+        except Exception as error:
+            print(
+                f"⚠️ Notification failed: {error}"
+            )
 
     # ==================================================
     # STATE
@@ -239,9 +256,6 @@ class DeltaExecutor:
             timestamp
         )
 
-        # FINAL ENTRY HOURS:
-        # 10:00-10:59 IST and 14:00-14:59 IST.
-        # Position management remains active 24/7.
         if self.allowed_entry_hours is not None:
             return (
                 ist_dt.hour
@@ -262,11 +276,17 @@ class DeltaExecutor:
         self.kill_switch = True
         self._save_state()
         print("\n🛑 KILL SWITCH ACTIVATED")
+        self._notify(
+            "🛑 Kill switch activated. New entries are blocked."
+        )
 
     def deactivate_kill_switch(self):
         self.kill_switch = False
         self._save_state()
         print("\n✅ Kill switch disabled")
+        self._notify(
+            "✅ Kill switch disabled. New entries may resume."
+        )
 
     def _safety_check(self, timestamp):
         self._update_day_from_candle(timestamp)
@@ -334,6 +354,50 @@ class DeltaExecutor:
             )
 
         return net_equity, available
+
+    def telegram_status(self):
+        try:
+            net_equity, available = (
+                self._wallet_snapshot()
+            )
+            equity_text = f"${net_equity:.2f}"
+            available_text = f"${available:.2f}"
+        except Exception as error:
+            equity_text = "unavailable"
+            available_text = f"error: {error}"
+
+        if self.position:
+            p = self.position
+            position_text = (
+                f"{p['side']} "
+                f"{p['contracts']} contract(s)\n"
+                f"Entry: {p['entry']:.2f}\n"
+                f"SL: {p['stop_price']:.2f}\n"
+                f"TP: {p['target_price']:.2f}\n"
+                f"Protected: "
+                f"{p['protected_r']:+.1f}R\n"
+                f"Best move: "
+                f"{p['highest_r_reached']:.2f}R"
+            )
+        else:
+            position_text = "FLAT"
+
+        return (
+            "🤖 SCALPBOT STATUS\n\n"
+            f"Kill switch: "
+            f"{'ON' if self.kill_switch else 'OFF'}\n"
+            f"Live auto: "
+            f"{'ON' if self.live_auto_trading else 'OFF'}\n"
+            f"Orders: "
+            f"{'ENABLED' if self.client.allow_orders else 'DISABLED'}\n"
+            f"Entry hours: 10:00 & 14:00 IST\n"
+            f"Entries today: "
+            f"{self.entries_today}/"
+            f"{self.max_entries_per_day}\n"
+            f"Net equity: {equity_text}\n"
+            f"Available: {available_text}\n\n"
+            f"Position:\n{position_text}"
+        )
 
     # ==================================================
     # PRICE CALCULATIONS
@@ -443,6 +507,41 @@ class DeltaExecutor:
         print(f"Available USD  : ${available:.2f}")
         print("=" * 60)
 
+        if self.trade_confirmation_callback is not None:
+            confirmation_summary = (
+                f"Side: {side}\n"
+                f"Signal: {signal_price:.2f}\n"
+                f"Limit cap: {limit_price:.2f}\n"
+                f"Contracts: "
+                f"{self.contracts_per_trade}\n"
+                f"Risk: ${self.risk_dollars:.2f}\n"
+                f"Entry hours: 10/14 IST"
+            )
+
+            confirmed = (
+                self.trade_confirmation_callback(
+                    confirmation_summary
+                )
+            )
+
+            if not confirmed:
+                print(
+                    "\n❌ Telegram confirmation "
+                    "rejected/timed out. "
+                    "Signal skipped."
+                )
+                self._notify(
+                    "❌ Signal skipped: trade not confirmed."
+                )
+                return False
+
+        self._notify(
+            "📨 Sending IOC limit order\n"
+            f"{side} BTCUSD\n"
+            f"Limit cap: {limit_price:.2f}\n"
+            f"Contracts: {self.contracts_per_trade}"
+        )
+
         entry_order = self.client.place_limit_order(
             product_id=self.product_id,
             size=self.contracts_per_trade,
@@ -494,6 +593,11 @@ class DeltaExecutor:
                 f"Filled size   : "
                 f"{filled_size}"
             )
+            self._notify(
+                "⚪ Entry not filled inside the IOC limit cap. "
+                "Signal skipped."
+            )
+
             return False
 
         entry = float(fill_price)
@@ -542,6 +646,12 @@ class DeltaExecutor:
                 "\n🚨 PROTECTION CREATION FAILED."
             )
             print(protection_error)
+
+            self._notify(
+                "🚨 PROTECTION CREATION FAILED\n"
+                f"{protection_error}\n"
+                "Emergency reduce-only close is being sent."
+            )
 
             # Emergency close uses reduce-only market because
             # leaving an unprotected live position is worse.
@@ -594,6 +704,15 @@ class DeltaExecutor:
         print(f"6R TP limit    : {target_price:.2f}")
         print(f"1R distance    : {one_r_distance:.2f}")
 
+        self._notify(
+            "✅ LIVE POSITION OPENED\n"
+            f"{side} BTCUSD\n"
+            f"Entry: {entry:.2f}\n"
+            f"Initial SL: {stop_price:.2f}\n"
+            f"6R TP: {target_price:.2f}\n"
+            f"Risk: ${self.risk_dollars:.2f}"
+        )
+
         return True
 
     # ==================================================
@@ -628,6 +747,12 @@ class DeltaExecutor:
             f"🔒 Stop moved to "
             f"{protected_r:+.1f}R "
             f"({new_stop:.2f})"
+        )
+
+        self._notify(
+            "🔒 R-LADDER UPDATE\n"
+            f"Protected: {protected_r:+.1f}R\n"
+            f"New stop: {new_stop:.2f}"
         )
 
     def _update_ladder(self, candle):
@@ -720,6 +845,12 @@ class DeltaExecutor:
                 pass
 
         print("\n🏁 Exchange reports BTCUSD flat.")
+
+        self._notify(
+            "🏁 BTCUSD position is flat. "
+            "Sibling protection orders were cancelled where possible."
+        )
+
         self.position = None
         self._save_state()
 
