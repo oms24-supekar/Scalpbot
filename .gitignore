@@ -5,3 +5,5 @@ __pycache__/
 state/
 paper_trades/
 backtests/
+
+history_cache/

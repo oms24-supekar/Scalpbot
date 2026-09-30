@@ -49,8 +49,8 @@ async def main():
         symbol="BTCUSD",
 
         # Start tiny. Edit later only after validating logs.
-        contracts_per_trade=1,
-        risk_dollars=1.0,
+        contracts_per_trade=24,
+        risk_dollars=3.5,
 
         # LONG  -> signal close + $12.50 limit cap
         # SHORT -> signal close - $12.50 limit cap
@@ -66,7 +66,7 @@ async def main():
 
         # Hard safety cap.
         max_contracts=1,
-        max_daily_loss_usd=2.0,
+        max_daily_loss_usd=7.0,
 
         live_auto_trading=live_auto,
 
