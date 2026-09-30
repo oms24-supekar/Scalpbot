@@ -61,6 +61,7 @@ async def main():
         allowed_entry_hours={10, 14},
 
         max_entries_per_day=2,
+        # Compatibility only; no fixed TP in live exit logic.
         final_target_r=6.0,
 
         # Hard safety cap.
@@ -90,6 +91,7 @@ async def main():
         "🟢 ScalpBot AWS started\n"
         "Environment: INDIA PRODUCTION\n"
         "Entry hours: 10:00 & 14:00 IST\n"
+        "Exit: unlimited trail 1R behind peak\n"
         f"Orders: "
         f"{'ENABLED' if client.allow_orders else 'DISABLED'}\n"
         f"Live auto: "
@@ -143,7 +145,8 @@ async def main():
     print("LONG cap          : signal + $12.50")
     print("SHORT cap         : signal - $12.50")
     print("Initial SL        : STOP-MARKET")
-    print("6R TP             : reduce-only LIMIT")
+    print("Take profit       : NONE")
+    print("Exit logic        : trail 1R below highest whole R")
     print("Contracts/trade   : 1")
     print("Risk/trade        : $1")
     print("Max entries/day   : 2")
@@ -208,7 +211,7 @@ async def main():
             print(f"Side       : {p['side']}")
             print(f"Entry      : {p['entry']:.2f}")
             print(f"Stop       : {p['stop_price']:.2f}")
-            print(f"Target     : {p['target_price']:.2f}")
+            print("Exit       : trail 1R below peak")
             print(
                 f"Protected  : "
                 f"{p['protected_r']:+.1f}R"

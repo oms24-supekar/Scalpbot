@@ -208,6 +208,7 @@ class TelegramControl:
         sent = self.send(
             "⚡ LIVE TRADE CONFIRMATION\n\n"
             f"{summary}\n\n"
+            "Tap a button below — no typing needed.\n"
             f"Expires in {timeout_seconds}s.",
             reply_markup=keyboard,
         )
@@ -243,6 +244,45 @@ class TelegramControl:
             "Signal skipped."
         )
         return False
+
+    def _remove_inline_keyboard(
+        self,
+        callback,
+    ):
+        message = callback.get(
+            "message",
+            {},
+        )
+
+        chat_id = (
+            message.get("chat", {})
+            .get("id")
+        )
+
+        message_id = message.get(
+            "message_id"
+        )
+
+        if (
+            chat_id is None
+            or message_id is None
+        ):
+            return
+
+        try:
+            self._request(
+                "POST",
+                "editMessageReplyMarkup",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reply_markup": {
+                        "inline_keyboard": []
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     def _answer_callback(
         self,
@@ -301,6 +341,9 @@ class TelegramControl:
                     callback_id,
                     "Confirmed",
                 )
+                self._remove_inline_keyboard(
+                    callback
+                )
 
             elif action == "trade_reject":
                 pending["decision"] = False
@@ -308,6 +351,9 @@ class TelegramControl:
                 self._answer_callback(
                     callback_id,
                     "Rejected",
+                )
+                self._remove_inline_keyboard(
+                    callback
                 )
 
     def _poll_once(self):

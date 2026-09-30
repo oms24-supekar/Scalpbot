@@ -21,7 +21,8 @@ class DeltaExecutor:
 
     Protection:
       Initial SL remains STOP-MARKET deliberately.
-      6R target is a resting reduce-only LIMIT order.
+      No fixed take-profit is used.
+      Stop trails 1R behind the highest whole-R milestone reached.
     """
 
     def __init__(
@@ -57,6 +58,7 @@ class DeltaExecutor:
             else {10, 14}
         )
         self.max_entries_per_day = int(max_entries_per_day)
+        # Compatibility only; no fixed take-profit is placed.
         self.final_target_r = float(final_target_r)
 
         self.max_contracts = int(max_contracts)
@@ -373,7 +375,7 @@ class DeltaExecutor:
                 f"{p['contracts']} contract(s)\n"
                 f"Entry: {p['entry']:.2f}\n"
                 f"SL: {p['stop_price']:.2f}\n"
-                f"TP: {p['target_price']:.2f}\n"
+                f"Exit: trail 1R behind peak\n"
                 f"Protected: "
                 f"{p['protected_r']:+.1f}R\n"
                 f"Best move: "
@@ -610,15 +612,8 @@ class DeltaExecutor:
             -1.0,
         )
 
-        target_price = self._price_at_r(
-            side,
-            entry,
-            one_r_distance,
-            self.final_target_r,
-        )
 
         stop_client_id = f"ema-sl-{unique}"
-        tp_client_id = f"ema-tp-{unique}"
 
         try:
             stop_order = self.client.place_stop_market(
@@ -627,18 +622,6 @@ class DeltaExecutor:
                 side=exit_side,
                 stop_price=stop_price,
                 client_order_id=stop_client_id,
-            )
-
-            # TP is a reduce-only LIMIT order, not a market order.
-            tp_order = self.client.place_limit_order(
-                product_id=self.product_id,
-                size=self.contracts_per_trade,
-                side=exit_side,
-                limit_price=target_price,
-                client_order_id=tp_client_id,
-                reduce_only=True,
-                time_in_force="gtc",
-                post_only=False,
             )
 
         except Exception as protection_error:
@@ -685,15 +668,12 @@ class DeltaExecutor:
             "risk_dollars": self.risk_dollars,
             "one_r_distance": one_r_distance,
             "stop_price": stop_price,
-            "target_price": target_price,
             "protected_r": -1.0,
             "highest_r_reached": 0.0,
             "entry_order_id": entry_order.get("id"),
             "entry_client_id": entry_client_id,
             "stop_order_id": stop_order.get("id"),
             "stop_client_id": stop_client_id,
-            "tp_order_id": tp_order.get("id"),
-            "tp_client_id": tp_client_id,
         }
 
         self._save_state()
@@ -701,7 +681,7 @@ class DeltaExecutor:
         print("\n✅ LIVE POSITION OPENED")
         print(f"Entry fill     : {entry:.2f}")
         print(f"Initial SL     : {stop_price:.2f}")
-        print(f"6R TP limit    : {target_price:.2f}")
+        print("Exit mode      : TRAIL 1R BELOW PEAK")
         print(f"1R distance    : {one_r_distance:.2f}")
 
         self._notify(
@@ -709,7 +689,7 @@ class DeltaExecutor:
             f"{side} BTCUSD\n"
             f"Entry: {entry:.2f}\n"
             f"Initial SL: {stop_price:.2f}\n"
-            f"6R TP: {target_price:.2f}\n"
+            "Exit: trail 1R below highest whole R\n"
             f"Risk: ${self.risk_dollars:.2f}"
         )
 
@@ -775,25 +755,18 @@ class DeltaExecutor:
             favorable_r,
         )
 
-        if favorable_r >= 5:
-            if p["protected_r"] < 4:
-                self._move_stop(4)
+        highest_r = p["highest_r_reached"]
 
-        elif favorable_r >= 4:
-            if p["protected_r"] < 3:
-                self._move_stop(3)
+        if highest_r >= 1.0:
+            highest_whole_r = int(highest_r)
+            new_protected_r = (
+                highest_whole_r - 1
+            )
 
-        elif favorable_r >= 3:
-            if p["protected_r"] < 2:
-                self._move_stop(2)
-
-        elif favorable_r >= 2:
-            if p["protected_r"] < 1:
-                self._move_stop(1)
-
-        elif favorable_r >= 1:
-            if p["protected_r"] < 0.5:
-                self._move_stop(0.5)
+            if new_protected_r > p["protected_r"]:
+                self._move_stop(
+                    float(new_protected_r)
+                )
 
         self._save_state()
 
@@ -829,7 +802,6 @@ class DeltaExecutor:
         # that may still be resting.
         for order_key in (
             "stop_order_id",
-            "tp_order_id",
         ):
             order_id = p.get(order_key)
 
@@ -848,7 +820,7 @@ class DeltaExecutor:
 
         self._notify(
             "🏁 BTCUSD position is flat. "
-            "Sibling protection orders were cancelled where possible."
+            "Remaining stop order was cancelled where possible."
         )
 
         self.position = None

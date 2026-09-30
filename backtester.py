@@ -39,6 +39,7 @@ class Backtester:
         self.session_end_hour = session_end_hour
         self.max_entries_per_day = max_entries_per_day
 
+        # Compatibility only; this model has no fixed TP.
         self.final_target_r = final_target_r
 
         # If provided, entries are allowed ONLY during these IST hours.
@@ -436,10 +437,21 @@ class Backtester:
         return False
 
     # ==================================================
-    # R LADDER
+    # TRAIL 1R BELOW HIGHEST WHOLE R
     # ==================================================
 
     def _update_r_ladder(self, candle):
+        """
+        No fixed take-profit.
+
+        1R reached  -> stop at 0R
+        2R reached  -> stop at +1R
+        3R reached  -> stop at +2R
+        ...
+        10R reached -> stop at +9R
+
+        Stop updates occur on closed candles.
+        """
         if self.position is None:
             return False
 
@@ -451,14 +463,11 @@ class Backtester:
 
         if side == "LONG":
             favorable_r = (
-                candle["high"]
-                - entry
+                candle["high"] - entry
             ) / one_r
-
         else:
             favorable_r = (
-                entry
-                - candle["low"]
+                entry - candle["low"]
             ) / one_r
 
         p["highest_r_reached"] = max(
@@ -466,82 +475,27 @@ class Backtester:
             favorable_r,
         )
 
-        # 6R -> FULL TAKE PROFIT
-        if favorable_r >= self.final_target_r:
-            target_price = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                self.final_target_r,
-            )
+        highest_r = p["highest_r_reached"]
 
-            self._close_trade(
-                raw_exit_price=target_price,
-                exit_time=candle["timestamp"],
-                reason="TARGET_6R",
-            )
-
-            return True
-
-        # 5R -> protect +4R
-        if favorable_r >= 5:
-            p["stop_price"] = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                4,
-            )
-
-            p["protected_r"] = 4
+        if highest_r < 1.0:
             return False
 
-        # 4R -> protect +3R
-        if favorable_r >= 4:
-            p["stop_price"] = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                3,
-            )
+        highest_whole_r = int(highest_r)
+        new_protected_r = highest_whole_r - 1
 
-            p["protected_r"] = 3
+        if new_protected_r <= p["protected_r"]:
             return False
 
-        # 3R -> protect +2R
-        if favorable_r >= 3:
-            p["stop_price"] = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                2,
-            )
+        p["stop_price"] = self._price_at_r(
+            side,
+            entry,
+            one_r,
+            new_protected_r,
+        )
 
-            p["protected_r"] = 2
-            return False
-
-        # 2R -> protect +1R
-        if favorable_r >= 2:
-            p["stop_price"] = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                1,
-            )
-
-            p["protected_r"] = 1
-            return False
-
-        # 1R -> protect +0.5R
-        if favorable_r >= 1:
-            p["stop_price"] = self._price_at_r(
-                side,
-                entry,
-                one_r,
-                0.5,
-            )
-
-            p["protected_r"] = 0.5
-            return False
+        p["protected_r"] = float(
+            new_protected_r
+        )
 
         return False
 
@@ -670,11 +624,25 @@ class Backtester:
             / self.starting_equity
         ) * 100
 
-        target_6r = [
+        reached_6r = [
             t
             for t in self.trades
-            if t["reason"] == "TARGET_6R"
+            if t["highest_r_reached"] >= 6.0
         ]
+
+        reached_10r = [
+            t
+            for t in self.trades
+            if t["highest_r_reached"] >= 10.0
+        ]
+
+        max_r_reached = max(
+            (
+                t["highest_r_reached"]
+                for t in self.trades
+            ),
+            default=0.0,
+        )
 
         full_losses = [
             t
@@ -755,7 +723,10 @@ class Backtester:
             "protected_2r": len(protected_2r),
             "protected_3r": len(protected_3r),
             "protected_4r": len(protected_4r),
-            "target_6r": len(target_6r),
+            "target_6r": len(reached_6r),
+            "reached_6r": len(reached_6r),
+            "reached_10r": len(reached_10r),
+            "max_r_reached": max_r_reached,
 
             "ruined": self.ruined,
         }
