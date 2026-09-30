@@ -65,7 +65,7 @@ async def main():
         final_target_r=6.0,
 
         # Hard safety cap.
-        max_contracts=1,
+        max_contracts=24,
         max_daily_loss_usd=7.0,
 
         live_auto_trading=live_auto,
@@ -147,10 +147,10 @@ async def main():
     print("Initial SL        : STOP-MARKET")
     print("Take profit       : NONE")
     print("Exit logic        : trail 1R below highest whole R")
-    print("Contracts/trade   : 1")
-    print("Risk/trade        : $1")
+    print("Contracts/trade   : 24")
+    print("Risk/trade        : $3.50")
+    print("Daily loss cap    : $7.00")
     print("Max entries/day   : 2")
-    print("Daily loss cap    : $2")
     print(
         f"LIVE AUTO         : "
         f"{'ON' if live_auto else 'OFF'}"
